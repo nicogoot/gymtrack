@@ -299,7 +299,62 @@ body::before{
   color:var(--text2);font-family:monospace;
 }
 
-.empty{text-align:center;padding:60px 20px;color:var(--muted)}
+.hist-fetch-btn{
+  width:100%;padding:11px;border-radius:10px;
+  background:var(--accent-dim);border:1px solid var(--accent-glow);
+  color:var(--accent);font-family:var(--sans);font-size:12px;font-weight:700;
+  cursor:pointer;transition:all 0.2s;margin-bottom:12px;letter-spacing:0.5px;
+}
+.hist-fetch-btn:hover{background:var(--accent);color:#000}
+.hist-fetch-btn:disabled{background:var(--border);color:var(--muted);cursor:not-allowed}
+
+.hist-subtabs{
+  display:flex;gap:0;border:1px solid var(--border);
+  border-radius:8px;overflow:hidden;margin-bottom:14px;
+}
+.hist-subtab{
+  flex:1;padding:9px;background:var(--surface);border:none;
+  color:var(--muted);font-family:var(--sans);font-size:12px;font-weight:700;
+  cursor:pointer;transition:all 0.15s;border-right:1px solid var(--border);
+}
+.hist-subtab:last-child{border-right:none}
+.hist-subtab.active{background:var(--accent-dim);color:var(--accent)}
+
+.hist-loading{text-align:center;padding:30px;color:var(--muted);font-size:13px}
+
+/* ejercicio progress card */
+.prog-card{
+  background:var(--card);border:1px solid var(--border);
+  border-radius:12px;overflow:hidden;margin-bottom:10px;
+}
+.prog-card-header{
+  padding:12px 16px;background:var(--surface);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+  cursor:pointer;
+}
+.prog-card-name{font-size:13px;font-weight:700}
+.prog-card-meta{font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase}
+.prog-card-badge{
+  font-size:10px;padding:3px 9px;border-radius:20px;
+  background:var(--accent-dim);color:var(--accent);
+  border:1px solid var(--accent-glow);font-weight:700;flex-shrink:0;
+}
+.prog-sessions{padding:8px 0}
+.prog-session-row{
+  display:flex;align-items:center;gap:10px;
+  padding:8px 16px;border-bottom:1px solid rgba(255,255,255,0.03);
+}
+.prog-session-row:last-child{border-bottom:none}
+.prog-session-label{font-size:11px;color:var(--muted);min-width:90px;font-family:monospace}
+.prog-sets{display:flex;gap:4px;flex-wrap:wrap}
+.prog-set-chip{
+  font-size:10px;padding:2px 7px;border-radius:6px;
+  background:var(--surface);border:1px solid var(--border);
+  color:var(--text2);font-family:monospace;
+}
+.prog-best{color:var(--accent);border-color:rgba(232,255,71,0.25);background:var(--accent-dim)}
+
 .empty-icon{font-size:40px;margin-bottom:12px}
 
 /* ── SETTINGS ── */
@@ -455,8 +510,34 @@ body::before{
 
 <!-- ══════ VIEW HISTORIAL ══════ -->
 <div class="view" id="view-historial">
-  <div class="hist-summary" id="histSummary"></div>
-  <div id="histList"></div>
+
+  <!-- KPIs -->
+  <div class="hist-summary" id="histSummary">
+    <div class="hs-item"><div class="hs-val" id="hs-sesiones">—</div><div class="hs-lbl">Sesiones</div></div>
+    <div class="hs-item"><div class="hs-val" id="hs-ejercicios">—</div><div class="hs-lbl">Ejercicios</div></div>
+    <div class="hs-item"><div class="hs-val" id="hs-series">—</div><div class="hs-lbl">Series</div></div>
+  </div>
+
+  <!-- Fetch button -->
+  <button class="hist-fetch-btn" id="histFetchBtn" onclick="fetchHistory()">
+    ↻ Cargar historial desde Sheets
+  </button>
+
+  <!-- Sub-tabs -->
+  <div class="hist-subtabs">
+    <button class="hist-subtab active" onclick="setHistTab('sesiones',this)">Por sesión</button>
+    <button class="hist-subtab" onclick="setHistTab('ejercicios',this)">Por ejercicio</button>
+  </div>
+
+  <!-- Loading -->
+  <div class="hist-loading" id="histLoading" style="display:none">
+    <div class="spinner"></div>
+    Leyendo Google Sheet...
+  </div>
+
+  <!-- Content -->
+  <div id="histContent"></div>
+
 </div>
 
 <!-- ══════ SERIES MODAL ══════ -->
@@ -821,40 +902,137 @@ function jsonp(url, payload){
 }
 
 // ══════════════════════════════════════════════
-// HISTORY VIEW
+// HISTORY VIEW — lee del Sheet
 // ══════════════════════════════════════════════
+let sheetRows   = [];  // raw rows from Sheet
+let histTabMode = 'sesiones';
+
+function setHistTab(mode, el){
+  histTabMode = mode;
+  document.querySelectorAll('.hist-subtab').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  renderHistContent();
+}
+
+async function fetchHistory(){
+  const cfg = getCfg();
+  if(!cfg.script){ toast('Configurá el Script URL en ⚙','warn'); return; }
+  document.getElementById('histFetchBtn').disabled = true;
+  document.getElementById('histLoading').style.display = 'block';
+  document.getElementById('histContent').innerHTML = '';
+  try {
+    const r = await fetch(cfg.script + '?action=readgym');
+    const d = await r.json();
+    if(d.status !== 'ok') throw new Error(d.message);
+    sheetRows = d.rows || [];
+    renderHistContent();
+  } catch(e){
+    toast('Error leyendo Sheets: '+e.message,'err');
+    document.getElementById('histContent').innerHTML =
+      `<div class="empty"><div class="empty-icon">⚠️</div><p>${e.message}</p></div>`;
+  } finally {
+    document.getElementById('histFetchBtn').disabled = false;
+    document.getElementById('histLoading').style.display = 'none';
+  }
+}
+
 function renderHistory(){
-  const hist = getHistory();
-  const totalSessions  = hist.length;
-  const totalExercises = hist.reduce((a,s)=>a+s.exercises.length,0);
-  const totalSets      = hist.reduce((a,s)=>a+s.exercises.reduce((b,e)=>b+(e.sets?.length||0),0),0);
-  document.getElementById('histSummary').innerHTML=`
-    <div class="hs-item"><div class="hs-val">${totalSessions}</div><div class="hs-lbl">Sesiones</div></div>
-    <div class="hs-item"><div class="hs-val">${totalExercises}</div><div class="hs-lbl">Ejercicios</div></div>
-    <div class="hs-item"><div class="hs-val">${totalSets}</div><div class="hs-lbl">Series</div></div>
-  `;
-  const list = document.getElementById('histList');
-  if(!hist.length){
-    list.innerHTML=`<div class="empty"><div class="empty-icon">🏋️</div><p>Todavía no hay sesiones.<br>¡Iniciá tu primera sesión!</p></div>`;
+  // Called when tab opens — show cached data or prompt
+  if(sheetRows.length) renderHistContent();
+  else document.getElementById('histContent').innerHTML =
+    `<div class="empty"><div class="empty-icon">📋</div><p>Tocá "Cargar historial" para ver tus datos.</p></div>`;
+}
+
+function renderHistContent(){
+  if(!sheetRows.length){
+    document.getElementById('histContent').innerHTML =
+      `<div class="empty"><div class="empty-icon">🏋️</div><p>No hay datos en el Sheet todavía.</p></div>`;
     return;
   }
-  list.innerHTML = hist.map(s=>`
+
+  // Update KPIs
+  const sessions  = [...new Set(sheetRows.map(r=>r.sesion))].length;
+  const exercises = [...new Set(sheetRows.map(r=>r.ejercicio))].length;
+  const series    = sheetRows.length;
+  document.getElementById('hs-sesiones').textContent  = sessions;
+  document.getElementById('hs-ejercicios').textContent = exercises;
+  document.getElementById('hs-series').textContent    = series;
+
+  if(histTabMode === 'sesiones') renderBySesion();
+  else renderByEjercicio();
+}
+
+function renderBySesion(){
+  // Group by sesion label
+  const map = {};
+  sheetRows.forEach(r=>{
+    const key = r.sesion || r.dia;
+    if(!map[key]) map[key] = { label:key, fecha:r.fecha, dia:r.dia, duracion:r.duracion, exercises:{} };
+    const ex = map[key].exercises;
+    if(!ex[r.ejercicio]) ex[r.ejercicio] = [];
+    ex[r.ejercicio].push({ serie:r.serie, kg:r.kg, reps:r.reps });
+  });
+
+  const sorted = Object.values(map).reverse();
+  document.getElementById('histContent').innerHTML = sorted.map(s=>`
     <div class="hist-session">
       <div class="hist-session-header">
         <div>
-          <div class="hist-session-date">${s.sessionLabel||s.dayName}</div>
-          <div class="hist-session-day">${fmtDate(s.date)} · ${s.duration||'?'} min</div>
+          <div class="hist-session-date">${s.label}</div>
+          <div class="hist-session-day">${s.fecha}${s.duracion ? ' · '+s.duracion+' min' : ''}</div>
         </div>
-        <div class="hist-session-count">${s.exercises.length} ejercicios</div>
+        <div class="hist-session-count">${Object.keys(s.exercises).length} ejercicios</div>
       </div>
-      ${s.exercises.map(ex=>`
+      ${Object.entries(s.exercises).map(([name,sets])=>`
         <div class="hist-ex-row">
-          <div class="hist-ex-name">${ex.name}</div>
+          <div class="hist-ex-name">${name}</div>
           <div class="hist-ex-sets">
-            ${(ex.sets||[]).map((s,i)=>`<div class="hist-set-chip">S${i+1}: ${s.kg}kg·${s.reps}r</div>`).join('')}
+            ${sets.map(s=>`<div class="hist-set-chip">S${s.serie}: ${s.kg}kg·${s.reps}r</div>`).join('')}
           </div>
         </div>`).join('')}
     </div>`).join('');
+}
+
+function renderByEjercicio(){
+  // Group by ejercicio, then by sesion
+  const map = {};
+  sheetRows.forEach(r=>{
+    if(!map[r.ejercicio]) map[r.ejercicio] = {};
+    const sesKey = r.sesion || r.dia;
+    if(!map[r.ejercicio][sesKey]) map[r.ejercicio][sesKey] = { label:sesKey, fecha:r.fecha, sets:[] };
+    map[r.ejercicio][sesKey].sets.push({ serie:r.serie, kg:r.kg, reps:r.reps });
+  });
+
+  document.getElementById('histContent').innerHTML = Object.entries(map).map(([exName, sessions])=>{
+    const sessionList = Object.values(sessions).reverse();
+    // Find best set (max kg)
+    let bestKg = 0;
+    sessionList.forEach(s=>s.sets.forEach(set=>{ if(set.kg>bestKg) bestKg=set.kg; }));
+
+    return `<div class="prog-card">
+      <div class="prog-card-header">
+        <div>
+          <div class="prog-card-name">${exName}</div>
+          <div class="prog-card-meta">${sessionList.length} sesiones · Mejor: ${bestKg}kg</div>
+        </div>
+        <div class="prog-card-badge">${sessionList.length}×</div>
+      </div>
+      <div class="prog-sessions">
+        ${sessionList.map(s=>{
+          const maxKg = Math.max(...s.sets.map(x=>x.kg));
+          return `<div class="prog-session-row">
+            <div class="prog-session-label">${s.label}<br><span style="font-size:9px;color:var(--muted)">${s.fecha}</span></div>
+            <div class="prog-sets">
+              ${s.sets.map(set=>`
+                <div class="prog-set-chip ${set.kg===bestKg?'prog-best':''}">
+                  S${set.serie}: ${set.kg}kg·${set.reps}r
+                </div>`).join('')}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ══════════════════════════════════════════════
