@@ -728,58 +728,75 @@ function startSession(){
 async function finishSession(){
   if(!sessionActive) return;
 
-  // Check at least one exercise logged
   const done = sessionLog[currentDay].filter(s=>s&&s.length>0).length;
   if(done===0){ toast('Registrá al menos un ejercicio','warn'); return; }
 
   clearInterval(timerInterval);
-  const durationMs = Date.now() - sessionStart;
-  const durationMin = Math.round(durationMs/60000);
+  const durationMin = Math.round((Date.now()-sessionStart)/60000);
   sessionActive = false;
 
   const day = DAYS[currentDay];
   const today = todayStr();
-  const sessNum = nextSessionNum(currentDay);
+
+  // Calculate session number by reading existing sheet data
+  const cfg = getCfg();
+  let sessNum = 1;
+  if(cfg.script){
+    try {
+      const r = await fetch(cfg.script + '?action=readgym');
+      const d = await r.json();
+      if(d.status==='ok'){
+        // Count unique dates that have this day type
+        const dates = new Set(
+          (d.rows||[])
+            .filter(r=>r.dia===day.name)
+            .map(r=>r.fecha)
+        );
+        // If today is already in there don't count it again
+        dates.delete(today);
+        sessNum = dates.size + 1;
+      }
+    } catch(e){ /* use 1 as fallback */ }
+  }
+
   const sessionLabel = `${day.name} #${sessNum}`;
 
-  // Build rows for Sheets
+  // Build rows — match existing sheet column order:
+  // Fecha | Día | Ejercicio | Serie N° | Peso (kg) | Repeticiones | Tiempo (minutos)
+  // New rows add sessionLabel into Día column as "Piernas #1" etc.
   const rows = [];
-  sessionLog[currentDay].forEach((sets, exIdx)=>{
+  sessionLog[currentDay].forEach((sets,exIdx)=>{
     if(!sets||!sets.length) return;
     const exName = day.exercises[exIdx].name;
     sets.forEach((s,sIdx)=>{
-      rows.push([today, sessionLabel, day.name, exName, sIdx+1, s.kg, s.reps, durationMin]);
+      rows.push([today, sessionLabel, exName, sIdx+1, s.kg, s.reps, durationMin]);
     });
   });
 
   // Save local history
   const hist = getHistory();
   hist.unshift({
-    date: today,
-    sessionLabel,
-    dayName: day.name,
-    dayIdx: currentDay,
-    duration: durationMin,
+    date: today, sessionLabel, dayName: day.name,
+    dayIdx: currentDay, duration: durationMin,
     exercises: sessionLog[currentDay]
-      .map((sets,i)=>({name:day.exercises[i].name, sets}))
+      .map((sets,i)=>({name:day.exercises[i].name,sets}))
       .filter(e=>e.sets&&e.sets.length>0)
   });
   saveHistory(hist);
 
-  // Sync to Sheets
+  // Sync to Sheets — sheet name Entrenamientos, 7 columns matching existing structure
   setSyncDot('saving');
   try {
-    await jsonp(getCfg().script, { sheet:'Entrenamientos', rows });
+    await jsonp(cfg.script, { sheet:'Entrenamientos', rows });
     setSyncDot('ok');
     setTimeout(()=>setSyncDot(''),3000);
   } catch(e){ setSyncDot('err'); }
 
-  // Reset
   sessionLog[currentDay] = Array(6).fill(null).map(()=>[]);
   updateSessionUI();
   renderDay(currentDay);
   document.getElementById('timerDisplay').textContent='';
-  toast(`✓ Sesión ${sessionLabel} guardada · ${durationMin} min`,'ok');
+  toast(`✓ ${sessionLabel} · ${durationMin} min`,'ok');
 }
 
 // ══════════════════════════════════════════════
