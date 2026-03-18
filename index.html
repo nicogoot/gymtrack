@@ -340,7 +340,42 @@ body::before{
   color:var(--muted);font-size:22px;cursor:pointer;
 }
 
-/* ── TOAST ── */
+/* ── SESSION BAR ── */
+.session-bar{
+  padding:10px 16px;
+  background:var(--surface);
+  border-bottom:1px solid var(--border);
+  transition:background 0.3s;
+}
+.btn-start-session{
+  width:100%;padding:12px;border-radius:10px;
+  background:var(--accent-dim);border:1px solid var(--accent-glow);
+  color:var(--accent);font-family:var(--sans);font-size:13px;font-weight:800;
+  cursor:pointer;transition:all 0.2s;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  letter-spacing:0.5px;
+}
+.btn-start-session:hover{background:var(--accent);color:#000}
+.btn-finish-session{
+  width:100%;padding:12px;border-radius:10px;
+  background:var(--accent);border:none;
+  color:#000;font-family:var(--sans);font-size:13px;font-weight:800;
+  cursor:pointer;transition:all 0.2s;
+  display:flex;align-items:center;justify-content:center;gap:12px;
+}
+.btn-finish-session:hover{filter:brightness(1.08)}
+
+/* day selector buttons */
+.day-sel-btn{
+  flex-shrink:0;padding:8px 14px;
+  border:1px solid var(--border);border-radius:8px;
+  background:var(--card);color:var(--muted);
+  font-family:var(--sans);font-size:11px;font-weight:700;
+  letter-spacing:1px;text-transform:uppercase;
+  cursor:pointer;transition:all 0.2s;white-space:nowrap;
+}
+.day-sel-btn.active{color:var(--accent);border-color:var(--accent);background:var(--accent-dim)}
+
 .toast{
   position:fixed;bottom:28px;left:50%;
   transform:translateX(-50%) translateY(16px);
@@ -376,6 +411,17 @@ body::before{
   <div class="session-badge" id="sessionBadge">0 ejercicios</div>
 </div>
 
+<!-- SESSION BAR -->
+<div class="session-bar" id="sessionBar">
+  <button class="btn-start-session" id="btnStart" onclick="startSession()">
+    <span>▶</span> Iniciar sesión
+  </button>
+  <button class="btn-finish-session" id="btnFinish" onclick="finishSession()" style="display:none">
+    <span id="timerDisplay" style="font-family:var(--display);font-size:18px;letter-spacing:1px"></span>
+    <span>Finalizar y guardar ✓</span>
+  </button>
+</div>
+
 <!-- TABS -->
 <div class="tabs">
   <button class="tab-btn active" onclick="goTab('rutina',this)">💪 Rutina</button>
@@ -387,10 +433,10 @@ body::before{
 
   <!-- Day selector -->
   <div style="display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;padding-bottom:2px;margin-bottom:14px">
-    <button class="tab-btn active" style="flex-shrink:0;border:1px solid var(--border);border-radius:8px;background:var(--card)" onclick="showDay(0,this)">Día 1 · Pecho</button>
-    <button class="tab-btn" style="flex-shrink:0;border:1px solid var(--border);border-radius:8px;background:var(--card)" onclick="showDay(1,this)">Día 2 · Espalda</button>
-    <button class="tab-btn" style="flex-shrink:0;border:1px solid var(--border);border-radius:8px;background:var(--card)" onclick="showDay(2,this)">Día 3 · Piernas</button>
-    <button class="tab-btn" style="flex-shrink:0;border:1px solid var(--border);border-radius:8px;background:var(--card)" onclick="showDay(3,this)">Día 4 · Hombros</button>
+    <button class="day-sel-btn active" onclick="showDay(0,this)">Día 1 · Pecho</button>
+    <button class="day-sel-btn" onclick="showDay(1,this)">Día 2 · Espalda</button>
+    <button class="day-sel-btn" onclick="showDay(2,this)">Día 3 · Piernas</button>
+    <button class="day-sel-btn" onclick="showDay(3,this)">Día 4 · Hombros</button>
   </div>
 
   <!-- Progress -->
@@ -504,38 +550,48 @@ const DAYS = [
   }
 ];
 
-// ══════════════════════════════════════════════
 // STATE
 // ══════════════════════════════════════════════
 let currentDay = 0;
-// sessionLog[dayIdx][exIdx] = [{kg, reps}, ...]
-let sessionLog = Array(4).fill(null).map(() => Array(6).fill(null).map(() => []));
+let sessionLog = Array(4).fill(null).map(()=>Array(6).fill(null).map(()=>[]));
 let modalExIdx = null;
+let sessionActive = false;
+let sessionStart  = null;
+let timerInterval = null;
 
 // ══════════════════════════════════════════════
 // STORAGE
 // ══════════════════════════════════════════════
-const LS_HIST = 'gymtrack_hist_v1';
+const LS_HIST = 'gymtrack_hist_v2';
 const LS_CFG  = 'gymtrack_cfg_v1';
+const LS_SESS_NUM = 'gymtrack_sessnum_v1'; // {dayIdx: count}
 
 function getHistory(){ try{return JSON.parse(localStorage.getItem(LS_HIST)||'[]')}catch{return[]} }
 function saveHistory(h){ localStorage.setItem(LS_HIST,JSON.stringify(h)) }
 function getCfg(){ try{return JSON.parse(localStorage.getItem(LS_CFG)||'{}')}catch{return{}} }
 function saveCfgData(c){ localStorage.setItem(LS_CFG,JSON.stringify(c)) }
+function getSessNums(){ try{return JSON.parse(localStorage.getItem(LS_SESS_NUM)||'{}')}catch{return{}} }
+function saveSessNums(n){ localStorage.setItem(LS_SESS_NUM,JSON.stringify(n)) }
+function nextSessionNum(dayIdx){
+  const nums = getSessNums();
+  const current = nums[dayIdx] || 0;
+  const next = current + 1;
+  nums[dayIdx] = next;
+  saveSessNums(nums);
+  return next;
+}
 
 // ══════════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════════
 function init(){
-  // Date
   const now = new Date();
   document.getElementById('todayDate').textContent =
     now.toLocaleDateString('es-AR',{weekday:'long',day:'numeric',month:'long'});
-
   const cfg = getCfg();
   if(!cfg.script) setTimeout(()=>toast('Configurá el Script URL en ⚙','warn'),800);
-
   renderDay(0);
+  updateSessionUI();
 }
 
 // ══════════════════════════════════════════════
@@ -550,11 +606,107 @@ function goTab(name, el){
 }
 
 // ══════════════════════════════════════════════
+// SESSION — Iniciar / Finalizar
+// ══════════════════════════════════════════════
+function updateSessionUI(){
+  const bar = document.getElementById('sessionBar');
+  const startBtn = document.getElementById('btnStart');
+  const finishBtn = document.getElementById('btnFinish');
+  const timerEl = document.getElementById('timerDisplay');
+
+  if(!sessionActive){
+    startBtn.style.display='flex';
+    finishBtn.style.display='none';
+    timerEl.textContent='';
+    bar.style.background='var(--surface)';
+  } else {
+    startBtn.style.display='none';
+    finishBtn.style.display='flex';
+    bar.style.background='rgba(232,255,71,0.05)';
+  }
+}
+
+function startSession(){
+  sessionActive = true;
+  sessionStart  = Date.now();
+  // Reset log for current day
+  sessionLog[currentDay] = Array(6).fill(null).map(()=>[]);
+
+  timerInterval = setInterval(()=>{
+    const elapsed = Math.floor((Date.now()-sessionStart)/1000);
+    const m = Math.floor(elapsed/60).toString().padStart(2,'0');
+    const s = (elapsed%60).toString().padStart(2,'0');
+    document.getElementById('timerDisplay').textContent = m+':'+s;
+  }, 1000);
+
+  updateSessionUI();
+  renderDay(currentDay);
+  toast('Sesión iniciada ⏱','ok');
+}
+
+async function finishSession(){
+  if(!sessionActive) return;
+
+  // Check at least one exercise logged
+  const done = sessionLog[currentDay].filter(s=>s&&s.length>0).length;
+  if(done===0){ toast('Registrá al menos un ejercicio','warn'); return; }
+
+  clearInterval(timerInterval);
+  const durationMs = Date.now() - sessionStart;
+  const durationMin = Math.round(durationMs/60000);
+  sessionActive = false;
+
+  const day = DAYS[currentDay];
+  const today = todayStr();
+  const sessNum = nextSessionNum(currentDay);
+  const sessionLabel = `${day.name} #${sessNum}`;
+
+  // Build rows for Sheets
+  const rows = [];
+  sessionLog[currentDay].forEach((sets, exIdx)=>{
+    if(!sets||!sets.length) return;
+    const exName = day.exercises[exIdx].name;
+    sets.forEach((s,sIdx)=>{
+      rows.push([today, sessionLabel, day.name, exName, sIdx+1, s.kg, s.reps, durationMin]);
+    });
+  });
+
+  // Save local history
+  const hist = getHistory();
+  hist.unshift({
+    date: today,
+    sessionLabel,
+    dayName: day.name,
+    dayIdx: currentDay,
+    duration: durationMin,
+    exercises: sessionLog[currentDay]
+      .map((sets,i)=>({name:day.exercises[i].name, sets}))
+      .filter(e=>e.sets&&e.sets.length>0)
+  });
+  saveHistory(hist);
+
+  // Sync to Sheets
+  setSyncDot('saving');
+  try {
+    await jsonp(getCfg().script, { sheet:'Entrenamientos', rows });
+    setSyncDot('ok');
+    setTimeout(()=>setSyncDot(''),3000);
+  } catch(e){ setSyncDot('err'); }
+
+  // Reset
+  sessionLog[currentDay] = Array(6).fill(null).map(()=>[]);
+  updateSessionUI();
+  renderDay(currentDay);
+  document.getElementById('timerDisplay').textContent='';
+  toast(`✓ Sesión ${sessionLabel} guardada · ${durationMin} min`,'ok');
+}
+
+// ══════════════════════════════════════════════
 // DAY RENDER
 // ══════════════════════════════════════════════
 function showDay(idx, el){
   currentDay = idx;
-  document.querySelectorAll('.tabs ~ .view .tab-btn, #view-rutina .tab-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('#view-rutina .day-sel-btn').forEach(b=>b.classList.remove('active'));
   el.classList.add('active');
   renderDay(idx);
 }
@@ -563,13 +715,13 @@ function renderDay(idx){
   const day = DAYS[idx];
   document.getElementById('dpTitle').textContent = day.name;
   updateProgress();
-
   const list = document.getElementById('exerciseList');
-  list.innerHTML = day.exercises.map((ex, i) => {
+  list.innerHTML = day.exercises.map((ex,i)=>{
     const logged = sessionLog[idx][i];
-    const isDone = logged && logged.length > 0;
+    const isDone = logged && logged.length>0;
+    const canEdit = sessionActive;
     return `
-    <div class="exercise-card ${isDone?'done':''}" id="excard-${i}" style="--row-accent:${day.color}">
+    <div class="exercise-card ${isDone?'done':''}" style="--row-accent:${day.color}">
       <div class="ex-header">
         <div class="ex-num">${String(i+1).padStart(2,'0')}</div>
         <div class="ex-info">
@@ -578,13 +730,15 @@ function renderDay(idx){
         </div>
         <div class="ex-meta">
           <div class="ex-sets-badge">${ex.sets} series</div>
-          <div class="ex-status">${isDone ? '✓ listo' : 'pendiente'}</div>
+          <div class="ex-status">${isDone?'✓ listo':'pendiente'}</div>
         </div>
       </div>
       ${isDone ? renderSetPills(logged) : ''}
-      <div class="ex-register-btn" onclick="openModal(${i})">
-        ${isDone ? '✏ Editar series' : '＋ Registrar series'}
-      </div>
+      ${canEdit ? `<div class="ex-register-btn" onclick="openModal(${i})">
+        ${isDone?'✏ Editar series':'＋ Registrar series'}
+      </div>` : `<div class="ex-register-btn" style="opacity:0.4;cursor:default">
+        Iniciá la sesión para registrar
+      </div>`}
     </div>`;
   }).join('');
 }
@@ -599,30 +753,25 @@ function updateProgress(){
   const day = DAYS[currentDay];
   const done = sessionLog[currentDay].filter(s=>s&&s.length>0).length;
   const total = day.exercises.length;
-  document.getElementById('dpCount').textContent = `${done} / ${total}`;
-  document.getElementById('dpFill').style.width = `${(done/total)*100}%`;
-
-  // Session badge
+  document.getElementById('dpCount').textContent=`${done} / ${total}`;
+  document.getElementById('dpFill').style.width=`${(done/total)*100}%`;
   const totalDone = sessionLog.reduce((a,d)=>a+d.filter(s=>s&&s.length>0).length,0);
-  document.getElementById('sessionBadge').textContent = `${totalDone} ejercicio${totalDone!==1?'s':''}`;
+  document.getElementById('sessionBadge').textContent=`${totalDone} ejercicio${totalDone!==1?'s':''}`;
 }
 
 // ══════════════════════════════════════════════
 // MODAL — Series
 // ══════════════════════════════════════════════
 function openModal(exIdx){
+  if(!sessionActive) return;
   modalExIdx = exIdx;
   const day = DAYS[currentDay];
   const ex = day.exercises[exIdx];
-  const existing = sessionLog[currentDay][exIdx] || [];
-
+  const existing = sessionLog[currentDay][exIdx]||[];
   document.getElementById('modalExName').textContent = ex.name;
   document.getElementById('modalExSub').textContent = `${ex.sets} series · ${day.name}`;
-
-  // Build series inputs
-  const grid = document.getElementById('seriesGrid');
-  grid.innerHTML = Array(ex.sets).fill(0).map((_,i)=>{
-    const prev = existing[i] || {};
+  document.getElementById('seriesGrid').innerHTML = Array(ex.sets).fill(0).map((_,i)=>{
+    const prev = existing[i]||{};
     return `<div class="serie-row">
       <div class="serie-num">${i+1}</div>
       <div class="serie-field">
@@ -635,82 +784,40 @@ function openModal(exIdx){
       </div>
     </div>`;
   }).join('');
-
   document.getElementById('seriesOverlay').classList.add('active');
-  // Focus first input
-  setTimeout(()=>document.getElementById('kg-0')?.focus(), 300);
+  setTimeout(()=>document.getElementById('kg-0')?.focus(),300);
 }
 
-function closeModal(){
-  document.getElementById('seriesOverlay').classList.remove('active');
-  modalExIdx = null;
-}
+function closeModal(){ document.getElementById('seriesOverlay').classList.remove('active'); modalExIdx=null; }
+function overlayClick(e){ if(e.target===document.getElementById('seriesOverlay')) closeModal(); }
 
-function overlayClick(e){
-  if(e.target===document.getElementById('seriesOverlay')) closeModal();
-}
-
-async function saveSeries(){
-  const day = DAYS[currentDay];
-  const ex = day.exercises[modalExIdx];
-  const sets = [];
-
-  for(let i=0; i<ex.sets; i++){
-    const kg   = parseFloat(document.getElementById(`kg-${i}`)?.value) || 0;
-    const reps = parseInt(document.getElementById(`reps-${i}`)?.value) || 0;
-    sets.push({kg, reps});
-  }
-
-  // Save to session log
+function saveSeries(){
+  const ex = DAYS[currentDay].exercises[modalExIdx];
+  const sets = Array(ex.sets).fill(0).map((_,i)=>({
+    kg:   parseFloat(document.getElementById(`kg-${i}`)?.value)||0,
+    reps: parseInt(document.getElementById(`reps-${i}`)?.value)||0
+  }));
   sessionLog[currentDay][modalExIdx] = sets;
   closeModal();
   renderDay(currentDay);
   updateProgress();
-
-  // Save to history (local)
-  const hist = getHistory();
-  const today = todayStr();
-  let session = hist.find(s=>s.date===today && s.dayIdx===currentDay);
-  if(!session){
-    session = { date:today, dayName:day.name, dayIdx:currentDay, exercises:[] };
-    hist.unshift(session);
-  }
-  const exEntry = session.exercises.find(e=>e.name===ex.name);
-  if(exEntry){ exEntry.sets=sets; }
-  else { session.exercises.push({ name:ex.name, sets }); }
-  saveHistory(hist);
-
-  // Sync to Sheets
-  await syncToSheets(today, day.name, ex.name, sets);
-  toast(`✓ ${ex.sets} series guardadas`,'ok');
+  toast(`✓ ${ex.sets} series registradas`,'ok');
 }
 
 // ══════════════════════════════════════════════
-// SHEETS SYNC
+// JSONP
 // ══════════════════════════════════════════════
-async function syncToSheets(date, dayName, exName, sets){
-  const cfg = getCfg();
-  if(!cfg.script) return;
-
-  setSyncDot('saving');
-
-  // Each set = one row: Fecha, Día, Ejercicio, Serie, Peso(kg), Reps
-  const rows = sets.map((s,i)=>[
-    date, dayName, exName, i+1, s.kg, s.reps
-  ]);
-
-  try {
-    await fetch(cfg.script, {
-      method:'POST',
-      mode:'no-cors',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ sheet: 'Entrenamientos', rows })
-    });
-    setSyncDot('ok');
-    setTimeout(()=>setSyncDot(''),3000);
-  } catch(e){
-    setSyncDot('err');
-  }
+function jsonp(url, payload){
+  return new Promise((resolve,reject)=>{
+    const cbName = 'cb_'+Date.now();
+    const script = document.createElement('script');
+    const timeout = setTimeout(()=>{ cleanup(); resolve('timeout-ok'); },8000);
+    window[cbName] = (data)=>{ cleanup(); resolve(data); };
+    script.onerror = ()=>{ cleanup(); reject(new Error('Script error')); };
+    script.src = `${url}?callback=${cbName}&data=${encodeURIComponent(JSON.stringify(payload))}`;
+    document.head.appendChild(script);
+    function cleanup(){ clearTimeout(timeout); delete window[cbName]; script.parentNode?.removeChild(script); }
+  });
 }
 
 // ══════════════════════════════════════════════
@@ -718,84 +825,53 @@ async function syncToSheets(date, dayName, exName, sets){
 // ══════════════════════════════════════════════
 function renderHistory(){
   const hist = getHistory();
-
-  // Summary stats
-  const totalSessions = hist.length;
+  const totalSessions  = hist.length;
   const totalExercises = hist.reduce((a,s)=>a+s.exercises.length,0);
-  const totalSets = hist.reduce((a,s)=>a+s.exercises.reduce((b,e)=>b+e.sets.length,0),0);
-
+  const totalSets      = hist.reduce((a,s)=>a+s.exercises.reduce((b,e)=>b+(e.sets?.length||0),0),0);
   document.getElementById('histSummary').innerHTML=`
     <div class="hs-item"><div class="hs-val">${totalSessions}</div><div class="hs-lbl">Sesiones</div></div>
     <div class="hs-item"><div class="hs-val">${totalExercises}</div><div class="hs-lbl">Ejercicios</div></div>
     <div class="hs-item"><div class="hs-val">${totalSets}</div><div class="hs-lbl">Series</div></div>
   `;
-
   const list = document.getElementById('histList');
   if(!hist.length){
-    list.innerHTML=`<div class="empty"><div class="empty-icon">🏋️</div><p>Todavía no hay sesiones registradas.<br>¡Empezá a entrenar!</p></div>`;
+    list.innerHTML=`<div class="empty"><div class="empty-icon">🏋️</div><p>Todavía no hay sesiones.<br>¡Iniciá tu primera sesión!</p></div>`;
     return;
   }
-
-  list.innerHTML = hist.map(session=>`
+  list.innerHTML = hist.map(s=>`
     <div class="hist-session">
       <div class="hist-session-header">
         <div>
-          <div class="hist-session-date">${fmtDate(session.date)}</div>
-          <div class="hist-session-day">${session.dayName}</div>
+          <div class="hist-session-date">${s.sessionLabel||s.dayName}</div>
+          <div class="hist-session-day">${fmtDate(s.date)} · ${s.duration||'?'} min</div>
         </div>
-        <div class="hist-session-count">${session.exercises.length} ejercicios</div>
+        <div class="hist-session-count">${s.exercises.length} ejercicios</div>
       </div>
-      ${session.exercises.map(ex=>`
+      ${s.exercises.map(ex=>`
         <div class="hist-ex-row">
           <div class="hist-ex-name">${ex.name}</div>
           <div class="hist-ex-sets">
-            ${ex.sets.map((s,i)=>`<div class="hist-set-chip">S${i+1}: ${s.kg}kg·${s.reps}r</div>`).join('')}
+            ${(ex.sets||[]).map((s,i)=>`<div class="hist-set-chip">S${i+1}: ${s.kg}kg·${s.reps}r</div>`).join('')}
           </div>
-        </div>
-      `).join('')}
-    </div>
-  `).join('');
+        </div>`).join('')}
+    </div>`).join('');
 }
 
 // ══════════════════════════════════════════════
 // SETTINGS
 // ══════════════════════════════════════════════
-function openSettings(){
-  const cfg = getCfg();
-  document.getElementById('cfgScript').value = cfg.script||'';
-  document.getElementById('settingsOverlay').classList.add('active');
-}
+function openSettings(){ const c=getCfg(); document.getElementById('cfgScript').value=c.script||''; document.getElementById('settingsOverlay').classList.add('active'); }
 function closeSettings(){ document.getElementById('settingsOverlay').classList.remove('active'); }
 function settingsClick(e){ if(e.target===document.getElementById('settingsOverlay')) closeSettings(); }
-function saveSettings(){
-  saveCfgData({ script: document.getElementById('cfgScript').value.trim() });
-  closeSettings();
-  toast('Configuración guardada ✓','ok');
-}
+function saveSettings(){ saveCfgData({script:document.getElementById('cfgScript').value.trim()}); closeSettings(); toast('Guardado ✓','ok'); }
 
 // ══════════════════════════════════════════════
 // UTILS
 // ══════════════════════════════════════════════
-function todayStr(){
-  const d=new Date();
-  return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
-}
-function fmtDate(str){
-  if(!str) return '';
-  const [d,m,y] = str.split('/');
-  const date = new Date(+y,+m-1,+d);
-  return date.toLocaleDateString('es-AR',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
-}
-function setSyncDot(state){
-  const dot = document.getElementById('syncDot');
-  dot.className = 'sync-dot'+(state?' '+state:'');
-}
-function toast(msg,type='ok'){
-  const t=document.getElementById('toast');
-  t.textContent=msg;
-  t.className=`toast show ${type}`;
-  setTimeout(()=>t.classList.remove('show'),3000);
-}
+function todayStr(){ const d=new Date(); return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`; }
+function fmtDate(str){ if(!str)return''; const[d,m,y]=str.split('/'); return new Date(+y,+m-1,+d).toLocaleDateString('es-AR',{weekday:'short',day:'numeric',month:'short'}); }
+function setSyncDot(state){ document.getElementById('syncDot').className='sync-dot'+(state?' '+state:''); }
+function toast(msg,type='ok'){ const t=document.getElementById('toast'); t.textContent=msg; t.className=`toast show ${type}`; setTimeout(()=>t.classList.remove('show'),3500); }
 
 init();
 </script>
